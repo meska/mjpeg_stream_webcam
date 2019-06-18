@@ -90,10 +90,7 @@ def handle_args():
     parser.add_argument('-c', '--camera', help='opencv camera number, ex. -c 1', type=int, default=0)
     parser.add_argument('-i', '--ipaddress', help='listening ip address, default localhost', type=str,
                         default='localhost')
-    parser.add_argument('-s', '--size', help='set size', nargs=2, type=int, default=(320, 240))
-
     params = vars(parser.parse_args())
-    params['size'] = (params['size'][0], params['size'][1])
     return params
 
 
