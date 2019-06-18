@@ -77,7 +77,7 @@ def main():
 
     params = handle_args()
     ip_addr = ifaddresses(params['interface'])[AF_INET][0]['addr']
-    capture = cv2.VideoCapture(0)
+    capture = cv2.VideoCapture(params['camera'])
     server = ThreadedHTTPServer((ip_addr, params['port']), CamHandler)
 
     try:
