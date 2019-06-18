@@ -21,6 +21,7 @@ class CamHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         print(f"{self.path}")
         if '.mjpg' in self.path.lower():
+            # send video stream
             self.send_response(200)
             self.send_header('Content-type', 'multipart/x-mixed-replace; boundary=--jpgboundary')
             self.end_headers()
@@ -45,6 +46,29 @@ class CamHandler(BaseHTTPRequestHandler):
                     break
                 except (BrokenPipeError, OSError):
                     pass
+            return
+        if '.jpg' in self.path.lower():
+            # send snapshot
+            try:
+                rc, img = capture.read()
+                if not rc:
+                    self.send_response(500)
+                    return
+
+                img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                jpg = Image.fromarray(img_rgb)
+                tmp_file = BytesIO()
+                jpg.save(tmp_file, 'JPEG')
+
+                self.send_response(200)
+                self.send_header('Content-type', 'image/jpeg')
+                self.send_header('X-Timestamp', time.time())
+                self.send_header('Content-length', str(tmp_file.tell()))
+                self.end_headers()
+                tmp_file.seek(0)
+                self.wfile.write(tmp_file.read())
+            except (BrokenPipeError, OSError):
+                pass
             return
         if self.path == '/':
             self.send_response(200)
