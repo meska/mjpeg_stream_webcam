@@ -20,7 +20,7 @@ class CamHandler(BaseHTTPRequestHandler):
     # noinspection PyPep8Naming
     def do_GET(self):
         print(f"{self.path}")
-        if self.path.lower().contains('.mjpg'):
+        if '.mjpg' in self.path.lower():
             self.send_response(200)
             self.send_header('Content-type', 'multipart/x-mixed-replace; boundary=--jpgboundary')
             self.end_headers()
