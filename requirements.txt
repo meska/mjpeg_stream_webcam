@@ -1,0 +1,4 @@
+opencvutils
+opencv-python
+netifaces
+pillow
