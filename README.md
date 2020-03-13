@@ -11,7 +11,7 @@ Installation:
 
 * install homebrew from https://brew.sh/
 * from console run `brew install python` to get python 3.7
-* 'pip install virtualenv' to install virtualenv
+* `pip install virtualenv` to install virtualenv
 * clone/download the repository on your drive
 * cd on the folder and run 
 ```
