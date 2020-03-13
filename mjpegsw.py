@@ -19,6 +19,8 @@ capture = None
 class CamHandler(BaseHTTPRequestHandler):
     # noinspection PyPep8Naming
     def do_GET(self):
+        if self.path == '/favicon.ico':
+            return
         print(f"{self.path}")
         if '.mjpg' in self.path.lower():
             # send video stream
