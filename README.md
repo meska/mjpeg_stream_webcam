@@ -23,7 +23,8 @@ pip install -r requirements.txt
 
 on octoprint you can use http://localhost:5001/cam.mjpg for stream url and http://localhost:5001/snap.jpg for snapshot url.
 
-## On MacOs Catalina you need to use opencv-python==4.0.0.21
+### MacOs Catalina:
+you need to use opencv-python==4.0.0.21
 ```
 pip install -r requirements.catalina.txt
 ```
