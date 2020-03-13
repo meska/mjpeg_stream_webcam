@@ -28,3 +28,6 @@ you need to use opencv-python==4.0.0.21
 ```
 pip install -r requirements.yosemite.txt
 ```
+
+### OpenCv Segmentation fault
+sometimes opencv crashes, for this you can use `start.sh` script that loops until you block it with CTRL-C
