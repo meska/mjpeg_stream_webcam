@@ -90,8 +90,8 @@ def handle_args():
     parser = argparse.ArgumentParser(description='Mjpeg streaming server: mjpegsw -p 8080 --camera 2')
     parser.add_argument('-p', '--port', help='http listening port, default 5001', type=int, default=5001)
     parser.add_argument('-c', '--camera', help='opencv camera number, ex. -c 1', type=int, default=0)
-    parser.add_argument('-i', '--ipaddress', help='listening ip address, default localhost', type=str,
-                        default='localhost')
+    parser.add_argument('-i', '--ipaddress', help='listening ip address, default all ips', type=str,
+                        default='0.0.0.0')
     params = vars(parser.parse_args())
     return params
 
