@@ -21,6 +21,10 @@ pip install -r requirements.txt
 ```
 * run the script with `python mjpegsw.py`or `.env/bin/python mjpegsw.py`
 
+optional params:
+`python mjpegsw.py --camera 1 --port 5001 --ipaddress 0.0.0.0`
+
+
 on octoprint you can use http://localhost:5001/cam.mjpg for stream url and http://localhost:5001/snap.jpg for snapshot url.
 
 ### MacOs Yosemite:
