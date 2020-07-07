@@ -1,6 +1,6 @@
 #!/usr/bin/python
 """
-Author: Marco Mescalchin
+Author: Marco Mescalchin, Brian Ho
 Mjpg stream Server for Mac Webcam
 """
 import argparse
