@@ -8,6 +8,8 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from io import BytesIO
 from socketserver import ThreadingMixIn
+import sys
+import logging
 
 import cv2
 
@@ -15,13 +17,24 @@ from PIL import Image
 
 capture = None
 
+file_handler = logging.FileHandler(filename='logs.debug', mode='w')
+stdout_handler = logging.StreamHandler(sys.stdout)
+handlers = [file_handler, stdout_handler]
+
+logging.basicConfig(
+    level=logging.DEBUG, 
+    format='%(asctime)s - %(levelname)s - %(module)s - line %(lineno)d - %(message)s',
+    handlers=handlers
+)
+
 
 class CamHandler(BaseHTTPRequestHandler):
     # noinspection PyPep8Naming
     def do_GET(self):
+        logger = logging.getLogger()
         if self.path == '/favicon.ico':
             return
-        print(f"{self.path}")
+        logger.debug(f"{self.path}")
         if '.mjpg' in self.path.lower():
             # send video stream
             self.send_response(200)
@@ -92,6 +105,12 @@ def handle_args():
     parser.add_argument('-c', '--camera', help='opencv camera number, ex. -c 1', type=int, default=0)
     parser.add_argument('-i', '--ipaddress', help='listening ip address, default all ips', type=str,
                         default='0.0.0.0')
+    parser.add_argument('-l', '--height', help='Height resolution for mjpeg streaming server, default to 1280', 
+                        type=int, default=1280)
+    parser.add_argument('-w', '--width', help='Width resolution for mjpeg streaming server, default to 720', 
+                        type=int, default=720)
+    parser.add_argument('-f', '--fps', help='fps for the streaming server, default to 60', 
+                        type=int, default=60)
     params = vars(parser.parse_args())
     return params
 
@@ -101,10 +120,15 @@ def main():
 
     params = handle_args()
     capture = cv2.VideoCapture(params['camera'])
+    capture.set(cv2.CAP_PROP_FPS, params['fps'])
+    capture.set(cv2.CAP_PROP_FRAME_WIDTH, params['width'])
+    capture.set(cv2.CAP_PROP_FRAME_HEIGHT, params['height'])
+    
     server = ThreadedHTTPServer((params['ipaddress'], params['port']), CamHandler)
+    logger = logging.getLogger()
 
     try:
-        print(f"Mjpeg server started on http://{params['ipaddress']}:{params['port']}")
+        logger.debug(f"Mjpeg server started on http://{params['ipaddress']}:{params['port']}")
         server.serve_forever()
     except KeyboardInterrupt:
         capture.release()
