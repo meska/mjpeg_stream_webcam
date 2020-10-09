@@ -1,3 +1,2 @@
-opencvutils
 opencv-python
 pillow
