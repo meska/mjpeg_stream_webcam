@@ -4,111 +4,86 @@ Author: Marco Mescalchin
 Mjpg stream Server for Mac Webcam
 """
 import argparse
-import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from io import BytesIO
-from socketserver import ThreadingMixIn
-
+from flask import Flask, send_file, Response
 import cv2
-
+from io import BytesIO
 from PIL import Image
 
+app = Flask(__name__)
+
+# Define the camera here
 capture = None
 
 
-class CamHandler(BaseHTTPRequestHandler):
-    # noinspection PyPep8Naming
-    def do_GET(self):
-        if self.path == '/favicon.ico':
-            return
-        print(f"{self.path}")
-        if '.mjpg' in self.path.lower():
-            # send video stream
-            self.send_response(200)
-            self.send_header('Content-type', 'multipart/x-mixed-replace; boundary=--jpgboundary')
-            self.end_headers()
-            while True:
-                try:
-                    rc, img = capture.read()
-                    if not rc:
-                        continue
-                    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    jpg = Image.fromarray(img_rgb)
-                    tmp_file = BytesIO()
-                    jpg.save(tmp_file, 'JPEG')
-                    self.wfile.write(b"--jpgboundary")
-                    self.end_headers()
-                    self.send_header('Content-type', 'image/jpeg')
-                    self.send_header('X-Timestamp', time.time())
-                    self.send_header('Content-length', str(tmp_file.tell()))
-                    self.end_headers()
-                    tmp_file.seek(0)
-                    self.wfile.write(tmp_file.read())
-                except KeyboardInterrupt:
-                    break
-                except (BrokenPipeError, OSError):
-                    pass
-            return
-        if '.jpg' in self.path.lower():
-            # send snapshot
-            try:
-                rc, img = capture.read()
-                if not rc:
-                    self.send_response(500)
-                    return
-
-                img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                jpg = Image.fromarray(img_rgb)
-                tmp_file = BytesIO()
-                jpg.save(tmp_file, 'JPEG')
-
-                self.send_response(200)
-                self.send_header('Content-type', 'image/jpeg')
-                self.send_header('X-Timestamp', time.time())
-                self.send_header('Content-length', str(tmp_file.tell()))
-                self.end_headers()
-                tmp_file.seek(0)
-                self.wfile.write(tmp_file.read())
-            except (BrokenPipeError, OSError):
-                pass
-            return
-        if self.path == '/':
-            self.send_response(200)
-            self.send_header('Content-type', 'text/html')
-            self.end_headers()
-            self.wfile.write(b'<html><head></head><body>')
-            self.wfile.write(b'<img src="/cam.mjpg"/>')
-            self.wfile.write(b'</body></html>')
-            return
+def createStreamFrame():
+    while True:
+        success, frame = capture.read()  # read the camera frame
+        if not success:
+            break
+        else:
+            ret, buffer = cv2.imencode('.jpg', frame)
+            frame = buffer.tobytes()
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')  # concat frame one by one and show result
 
 
-class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
-    """Handle requests in a separate thread."""
+@app.route("/")
+def hello_world():
+    return "<p>Hello, World!</p>"
+
+
+@app.route("/snap.jpg")
+def snap():
+    try:
+        success, frame = capture.read()
+        if not success:
+            return 500
+
+        imgRgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        jpeg = Image.fromarray(imgRgb)
+        bufferFile = BytesIO()
+        jpeg.save(bufferFile, 'JPEG')
+        bufferFile.seek(0)
+
+        return send_file(
+            bufferFile,
+            download_name='snap.jpg',
+            mimetype='image/jpeg'
+        )
+    except (BrokenPipeError, OSError):
+        pass
+    return
+
+
+@app.route("/cam.mjpg")
+def video():
+    return Response(createStreamFrame(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
 def handle_args():
-    parser = argparse.ArgumentParser(description='Mjpeg streaming server: mjpegsw -p 8080 --camera 2')
-    parser.add_argument('-p', '--port', help='http listening port, default 5001', type=int, default=5001)
-    parser.add_argument('-c', '--camera', help='opencv camera number, ex. -c 1', type=int, default=0)
+    parser = argparse.ArgumentParser(
+        description='Mjpeg streaming server: mjpegsw -p 8080 --camera 2')
+    parser.add_argument(
+        '-p', '--port', help='http listening port, default 5001', type=int, default=5001)
+    parser.add_argument(
+        '-c', '--camera', help='opencv camera number, ex. -c 1', type=int, default=0)
     parser.add_argument('-i', '--ipaddress', help='listening ip address, default all ips', type=str,
-                        default='0.0.0.0')
+                        default='127.0.0.1')
     params = vars(parser.parse_args())
     return params
 
 
 def main():
     global capture
-
     params = handle_args()
-    capture = cv2.VideoCapture(params['camera'])
-    server = ThreadedHTTPServer((params['ipaddress'], params['port']), CamHandler)
 
     try:
-        print(f"Mjpeg server started on http://{params['ipaddress']}:{params['port']}")
-        server.serve_forever()
+        capture = cv2.VideoCapture(params['camera'])
+        # Start the flask server
+        app.run(host=params['ipaddress'], port=params['port'], debug=False)
+
     except KeyboardInterrupt:
         capture.release()
-        server.socket.close()
 
 
 if __name__ == '__main__':
