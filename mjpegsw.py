@@ -31,15 +31,19 @@ signal.signal(signal.SIGINT, signal_handler_sigint)
 
 
 class CamDaemon(threading.Thread):
-    def __init__(self, camera):
+    def __init__(self, camera, capture_width, capture_height):
         threading.Thread.__init__(self)
         self.camera = camera
+        self.capture_width = capture_width
+        self.capture_height = capture_height
 
     def run(self):
         global img
         global capturing
 
         capture = cv2.VideoCapture(self.camera)
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.capture_width)
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.capture_height)
         y = 0
         while capturing:
             ret, frame = capture.read()
@@ -98,6 +102,8 @@ def handle_args():
         '-c', '--camera', help='opencv camera number, ex. -c 1', type=int, default=0)
     parser.add_argument('-i', '--ipaddress', help='listening ip address, default all ips', type=str,
                         default='127.0.0.1')
+    parser.add_argument('-w', '--width', help='capture resolution width', type=int, default=640)
+    parser.add_argument('-x', '--height', help='capture resolution height', type=int, default=480)
     params = vars(parser.parse_args())
     return params
 
@@ -105,7 +111,7 @@ def handle_args():
 def main():
     params = handle_args()
     # starts camera daemon thread
-    camera = CamDaemon(params['camera'])
+    camera = CamDaemon(params['camera'], params['width'], params['height'])
     camera.daemon = True
     camera.start()
     try:
