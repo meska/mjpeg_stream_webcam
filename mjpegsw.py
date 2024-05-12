@@ -31,19 +31,26 @@ signal.signal(signal.SIGINT, signal_handler_sigint)
 
 
 class CamDaemon(threading.Thread):
-    def __init__(self, camera, capture_width, capture_height, rotate_image=False):
+    def __init__(self, camera, capture_width, capture_height, capture_api, rotate_image=False):
         threading.Thread.__init__(self)
         self.camera = camera
         self.capture_width = capture_width
         self.capture_height = capture_height
         self.rotate_image = rotate_image
+        self.capture_api = capture_api
 
     def run(self):
         global img
         global capturing
 
-        # capture = cv2.VideoCapture(self.camera, cv2.CAP_V4L2) # TODO: put it in options, if needed
-        capture = cv2.VideoCapture(self.camera)
+        if self.capture_api:
+            if hasattr(cv2, self.capture_api):
+                capture = cv2.VideoCapture(self.camera, getattr(cv2, self.capture_api))
+            else:
+                print("Invalid capture API")
+                return
+        else:
+            capture = cv2.VideoCapture(self.camera)
         if self.capture_width:
             capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.capture_width)
         if self.capture_height:
@@ -111,6 +118,7 @@ def handle_args():
     parser.add_argument('-w', '--width', help='capture resolution width', type=int, required=False)
     parser.add_argument('-x', '--height', help='capture resolution height', type=int, required=False)
     parser.add_argument('-r', '--rotate', help='rotate image 180 degrees', action='store_true')
+    parser.add_argument('-a', '--capture_api', help='specific api for capture', type=str, required=False)
     params = vars(parser.parse_args())
     return params
 
@@ -123,8 +131,10 @@ def main():
         print("Image width set to: " + str(params['width']))
     if params['rotate']:
         print("Image will be rotated 180 degrees")
+    if params['capture_api']:
+        print("Will be used capture api: " + params['capture_api'])
     # starts camera daemon thread
-    camera = CamDaemon(params['camera'], params['width'], params['height'], params['rotate'])
+    camera = CamDaemon(params['camera'], params['width'], params['height'], params['capture_api'], params['rotate'])
     camera.daemon = True
     camera.start()
     try:
