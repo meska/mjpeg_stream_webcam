@@ -42,7 +42,8 @@ class CamDaemon(threading.Thread):
         global img
         global capturing
 
-        capture = cv2.VideoCapture(self.camera, cv2.CAP_V4L2)
+        # capture = cv2.VideoCapture(self.camera, cv2.CAP_V4L2) # TODO: put it in options, if needed
+        capture = cv2.VideoCapture(self.camera)
         if self.capture_width:
             capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.capture_width)
         if self.capture_height:
