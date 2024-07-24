@@ -4,17 +4,16 @@ Author: Marco Mescalchin
 Mjpg stream Server for Mac Webcam
 """
 import argparse
-import importlib
 import os
-import sys
-from time import sleep
 import signal
-from flask import Flask, redirect, send_file, Response, url_for
-import cv2
-from io import BytesIO
-from PIL import Image
 import threading
+from io import BytesIO
 from threading import Lock
+from time import sleep
+
+import cv2
+from PIL import Image
+from flask import Flask, Response, redirect, send_file, url_for
 
 app = Flask(__name__)
 img_lock = Lock()
