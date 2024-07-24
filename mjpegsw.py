@@ -4,25 +4,56 @@ Author: Marco Mescalchin
 Mjpg stream Server for Mac Webcam
 """
 import argparse
+import importlib
+import os
+import sys
 from time import sleep
 import signal
-
 from flask import Flask, redirect, send_file, Response, url_for
 import cv2
 from io import BytesIO
 from PIL import Image
 import threading
+from threading import Lock
 
 app = Flask(__name__)
-img = []
-capturing = True
+img_lock = Lock()
+img = None
 
 
-# noinspection PyUnusedLocal
+class CameraControl:
+    def __init__(self):
+        self.capturing = True
+        self.img = None
+        self.lock = Lock()
+
+    def stop_capturing(self):
+        with self.lock:
+            self.capturing = False
+
+    def start_capturing(self):
+        with self.lock:
+            self.capturing = True
+
+    def update_image(self, new_img):
+        with self.lock:
+            self.img = new_img
+
+    def get_image(self):
+        with self.lock:
+            return self.img
+
+    def is_capturing(self):
+        with self.lock:
+            return self.capturing
+
+
+camera_control = CameraControl()
+
+
 def signal_handler_sigint(signal_number, frame):
     print("Stopping camera ...")
-    global capturing
-    capturing = False
+    camera_control.stop_capturing()
     sleep(0.5)
     raise RuntimeError("SIGINT received")
 
@@ -31,8 +62,17 @@ signal.signal(signal.SIGINT, signal_handler_sigint)
 
 
 class CamDaemon(threading.Thread):
-    def __init__(self, camera, capture_width, capture_height, capture_api, rotate_image=False):
+    def __init__(
+        self,
+        camera_control,
+        camera,
+        capture_width,
+        capture_height,
+        capture_api,
+        rotate_image=False,
+    ):
         threading.Thread.__init__(self)
+        self.camera_control = camera_control
         self.camera = camera
         self.capture_width = capture_width
         self.capture_height = capture_height
@@ -40,47 +80,61 @@ class CamDaemon(threading.Thread):
         self.capture_api = capture_api
 
     def run(self):
-        global img
-        global capturing
+        while self.camera_control.is_capturing():
+            self.capture()
+            sleep(5)
+        # when cv2 crashes, it does not release the camera, so we need to exit
+        os._exit(0)
 
-        if self.capture_api:
-            if hasattr(cv2, self.capture_api):
-                capture = cv2.VideoCapture(self.camera, getattr(cv2, self.capture_api))
-            else:
-                print("Invalid capture API")
-                return
+    def capture(self):
+        if self.capture_api and hasattr(cv2, self.capture_api):
+            capture = cv2.VideoCapture(self.camera, getattr(cv2, self.capture_api))
         else:
             capture = cv2.VideoCapture(self.camera)
         if self.capture_width:
             capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.capture_width)
         if self.capture_height:
             capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.capture_height)
-        y = 0
-        while capturing:
-            ret, frame = capture.read()
-            if self.rotate_image:
-                frame = cv2.rotate(frame, cv2.ROTATE_180)
-            if ret:
-                img = frame
-            else:
-                y += 1
-                if y > 5:
-                    print("Camera Error")
-                    y = 0
+        capture.setExceptionMode(True)
+        while self.camera_control.is_capturing():
+            try:
+                ret, frame = capture.read()
+                if self.rotate_image:
+                    frame = cv2.rotate(frame, cv2.ROTATE_180)
+                if ret:
+                    self.camera_control.update_image(frame)
+            except Exception as e:
+                print("Error: " + str(e))
+                self.camera_control.stop_capturing()
+                break
         capture.release()
 
 
-def create_stream_frame():
+def create_stream_frame(camera_control):
     while True:
-        ret, _buffer = cv2.imencode('.jpg', img)
-        frame = _buffer.tobytes()
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')  # concat frame one by one and show result
+        img = camera_control.get_image()
+        if img is not None:
+            try:
+                _, _buffer = cv2.imencode(".jpg", img)
+                frame = _buffer.tobytes()
+                yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
+            except Exception as e:
+                print("Failed to encode image: " + str(e))
+                continue
+        sleep(0.1)
 
 
 @app.route("/")
 def hello_world():
-    return redirect(url_for('video'))
+    return redirect(url_for("video"))
+
+
+@app.route("/cam.mjpg")
+def video():
+    return Response(
+        create_stream_frame(camera_control),
+        mimetype="multipart/x-mixed-replace; boundary=frame",
+    )
 
 
 @app.route("/snap.jpg")
@@ -89,61 +143,75 @@ def snap():
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         jpeg = Image.fromarray(img_rgb)
         buffer_file = BytesIO()
-        jpeg.save(buffer_file, 'JPEG')
+        jpeg.save(buffer_file, "JPEG")
         buffer_file.seek(0)
 
-        return send_file(
-            buffer_file,
-            download_name='snap.jpg',
-            mimetype='image/jpeg'
-        )
+        return send_file(buffer_file, download_name="snap.jpg", mimetype="image/jpeg")
     except OSError:
         pass
 
 
-@app.route("/cam.mjpg")
-def video():
-    return Response(create_stream_frame(), mimetype='multipart/x-mixed-replace; boundary=frame')
-
-
 def handle_args():
     parser = argparse.ArgumentParser(
-        description='Mjpeg streaming server: mjpegsw -p 8080 --camera 2')
+        description="Mjpeg streaming server: mjpegsw -p 8080 --camera 2"
+    )
     parser.add_argument(
-        '-p', '--port', help='http listening port, default 5001', type=int, default=5001)
+        "-p", "--port", help="http listening port, default 5001", type=int, default=5001
+    )
     parser.add_argument(
-        '-c', '--camera', help='opencv camera number, ex. -c 1', type=int, default=0)
-    parser.add_argument('-i', '--ipaddress', help='listening ip address, default all ips', type=str,
-                        default='127.0.0.1')
-    parser.add_argument('-w', '--width', help='capture resolution width', type=int, required=False)
-    parser.add_argument('-x', '--height', help='capture resolution height', type=int, required=False)
-    parser.add_argument('-r', '--rotate', help='rotate image 180 degrees', action='store_true')
-    parser.add_argument('-a', '--capture_api', help='specific api for capture', type=str, required=False)
+        "-c", "--camera", help="opencv camera number, ex. -c 1", type=int, default=0
+    )
+    parser.add_argument(
+        "-i",
+        "--ipaddress",
+        help="listening ip address, default all ips",
+        type=str,
+        default="127.0.0.1",
+    )
+    parser.add_argument(
+        "-w", "--width", help="capture resolution width", type=int, required=False
+    )
+    parser.add_argument(
+        "-x", "--height", help="capture resolution height", type=int, required=False
+    )
+    parser.add_argument(
+        "-r", "--rotate", help="rotate image 180 degrees", action="store_true"
+    )
+    parser.add_argument(
+        "-a", "--capture_api", help="specific api for capture", type=str, required=False
+    )
     params = vars(parser.parse_args())
     return params
 
 
 def main():
     params = handle_args()
-    if params['height']:
-        print("Image height set to: " + str(params['height']))
-    if params['width']:
-        print("Image width set to: " + str(params['width']))
-    if params['rotate']:
+    if params["height"]:
+        print("Image height set to: " + str(params["height"]))
+    if params["width"]:
+        print("Image width set to: " + str(params["width"]))
+    if params["rotate"]:
         print("Image will be rotated 180 degrees")
-    if params['capture_api']:
-        print("Will be used capture api: " + params['capture_api'])
+    if params["capture_api"]:
+        print("Will be used capture api: " + params["capture_api"])
     # starts camera daemon thread
-    camera = CamDaemon(params['camera'], params['width'], params['height'], params['capture_api'], params['rotate'])
+    camera = CamDaemon(
+        camera_control,
+        params["camera"],
+        params["width"],
+        params["height"],
+        params["capture_api"],
+        params["rotate"],
+    )
     camera.daemon = True
     camera.start()
     try:
         # starts flask server
-        app.run(host=params['ipaddress'], port=params['port'], debug=False)
+        app.run(host=params["ipaddress"], port=params["port"], debug=False)
     except RuntimeError:
         print("Stopping mjpeg server ...")
         camera.join()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
