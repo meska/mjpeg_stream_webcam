@@ -1,8 +1,3 @@
-#!/usr/bin/python
-"""
-Author: Marco Mescalchin
-Mjpg stream Server for Mac Webcam
-"""
 import argparse
 import os
 import signal
@@ -10,8 +5,8 @@ import threading
 from io import BytesIO
 from threading import Lock
 from time import sleep
-
-import cv2
+import psutil
+import imageio
 from PIL import Image
 from flask import Flask, Response, redirect, send_file, url_for
 
@@ -62,7 +57,7 @@ signal.signal(signal.SIGINT, signal_handler_sigint)
 class CamDaemon(threading.Thread):
     def __init__(
         self,
-        camera_control,
+        camera_control_obj,
         camera,
         capture_width,
         capture_height,
@@ -71,45 +66,89 @@ class CamDaemon(threading.Thread):
         delay=0.2,
     ):
         threading.Thread.__init__(self)
-        self.camera_control = camera_control
+        self.camera_control = camera_control_obj
         self.camera = camera
         self.capture_width = capture_width
         self.capture_height = capture_height
         self.rotate_image = rotate_image
         self.capture_api = capture_api
         self.delay = delay
+        self.reader = None
+        self.ffmpeg_pid = None
 
     def run(self):
         while self.camera_control.is_capturing():
             self.capture()
             sleep(5)
-        # when cv2 crashes, it does not release the camera, so we need to exit
         os._exit(0)
 
+    @staticmethod
+    def get_ffmpeg_processes():
+        return [
+            p
+            for p in psutil.process_iter(["pid", "name"])
+            if "ffmpeg" in p.info["name"].lower()
+        ]
+
     def capture(self):
-        if self.capture_api and hasattr(cv2, self.capture_api):
-            capture = cv2.VideoCapture(self.camera, getattr(cv2, self.capture_api))
-        else:
-            capture = cv2.VideoCapture(self.camera)
-        if self.capture_width:
-            capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.capture_width)
-        if self.capture_height:
-            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.capture_height)
-        capture.setExceptionMode(True)
+        previous_frame = None
         while self.camera_control.is_capturing():
             try:
-                ret, frame = capture.read()
-                if self.rotate_image:
-                    frame = cv2.rotate(frame, cv2.ROTATE_180)
-                if ret:
-                    self.camera_control.update_image(frame)
-                if self.delay > 0:
-                    sleep(self.delay)
+                # to not kill other ffmpeg processes opened by other applications
+                ffmpeg_processes = self.get_ffmpeg_processes()
+
+                self.reader = imageio.get_reader(f"<video{self.camera}>")
+                # wait for new ffmpeg process to start from imageio
+                while len(self.get_ffmpeg_processes()) == len(ffmpeg_processes):
+                    sleep(0.1)
+
+                # store the pid of the current ffmpeg process
+                self.ffmpeg_pid = None
+                for proc in self.get_ffmpeg_processes():
+                    if proc.info["pid"] not in [
+                        p.info["pid"] for p in ffmpeg_processes
+                    ]:
+                        self.ffmpeg_pid = proc.info["pid"]
+                        break
+
+                while self.camera_control.is_capturing():
+                    try:
+                        print("Capturing frame ...")
+                        frame = self.reader.get_next_data()
+                        if (
+                            previous_frame is not None
+                            and (frame == previous_frame).all()
+                        ):
+                            print(
+                                "Frame is the same as previous. Reopening reader after 5 seconds."
+                            )
+
+                            if self.ffmpeg_pid:
+                                os.kill(self.ffmpeg_pid, signal.SIGKILL)
+                            else:
+                                for proc in psutil.process_iter(["pid", "name"]):
+                                    if "ffmpeg" in proc.info["name"].lower():
+                                        self.ffmpeg_pid = proc.info["pid"]
+                                        break
+                                if self.ffmpeg_pid:
+                                    os.kill(self.ffmpeg_pid, signal.SIGKILL)
+
+                            sleep(5)
+                            self.reader = imageio.get_reader(f"<video{self.camera}>")
+                            continue
+                        previous_frame = frame
+                        if self.rotate_image:
+                            frame = frame[::-1, ::-1]
+                        self.camera_control.update_image(frame)
+                        if self.delay > 0:
+                            sleep(self.delay)
+                    except Exception as e:
+                        print("Error capturing frame: " + str(e))
+                        break
+                self.reader.close()
             except Exception as e:
-                print("Error: " + str(e))
-                self.camera_control.stop_capturing()
-                break
-        capture.release()
+                print("Error opening video device: " + str(e))
+                sleep(5)
 
 
 def create_stream_frame(camera_control):
@@ -117,8 +156,9 @@ def create_stream_frame(camera_control):
         img = camera_control.get_image()
         if img is not None:
             try:
-                _, _buffer = cv2.imencode(".jpg", img)
-                frame = _buffer.tobytes()
+                buffer = BytesIO()
+                imageio.imwrite(buffer, img, format="jpg")
+                frame = buffer.getvalue()
                 yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
             except Exception as e:
                 print("Failed to encode image: " + str(e))
@@ -141,11 +181,10 @@ def video():
 
 @app.route("/snap.jpg")
 def snap():
-    # check if camera is capturing and return an empty buffer if not instead of an error
     if not camera_control.is_capturing() or camera_control.img is None:
         return send_file(BytesIO(), download_name="snap.jpg", mimetype="image/jpeg")
 
-    img_rgb = cv2.cvtColor(camera_control.img, cv2.COLOR_BGR2RGB)
+    img_rgb = camera_control.img
     jpeg = Image.fromarray(img_rgb)
     buffer_file = BytesIO()
     jpeg.save(buffer_file, "JPEG")
@@ -168,7 +207,7 @@ def handle_args():
     parser.add_argument(
         "-c",
         "--camera",
-        help="opencv camera number, ex. -c 1",
+        help="camera number, ex. -c 1",
         type=int,
         default=0,
     )
@@ -232,7 +271,6 @@ def main():
         print(
             "Will be used delay between captures: " + str(params["delay"]) + " seconds"
         )
-    # starts camera daemon thread
     camera = CamDaemon(
         camera_control,
         params["camera"],
@@ -245,7 +283,6 @@ def main():
     camera.daemon = True
     camera.start()
     try:
-        # starts flask server
         app.run(host=params["ipaddress"], port=params["port"], debug=False)
     except RuntimeError:
         print("Stopping mjpeg server ...")
