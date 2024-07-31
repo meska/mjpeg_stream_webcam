@@ -5,8 +5,10 @@ import threading
 from io import BytesIO
 from threading import Lock
 from time import sleep
-import psutil
+
 import imageio
+import numpy as np
+import psutil
 from PIL import Image
 from flask import Flask, Response, redirect, send_file, url_for
 
@@ -19,6 +21,7 @@ class CameraControl:
         self.capturing = True
         self.img = None
         self.lock = Lock()
+        self.stuck = False
 
     def stop_capturing(self):
         with self.lock:
@@ -39,6 +42,14 @@ class CameraControl:
     def is_capturing(self):
         with self.lock:
             return self.capturing
+
+    def set_stuck(self, stuck):
+        with self.lock:
+            self.stuck = stuck
+
+    def is_stuck(self):
+        with self.lock:
+            return self.stuck
 
 
 camera_control = CameraControl()
@@ -74,7 +85,6 @@ class CamDaemon(threading.Thread):
         self.capture_api = capture_api
         self.delay = delay
         self.reader = None
-        self.ffmpeg_pid = None
 
     def run(self):
         while self.camera_control.is_capturing():
@@ -90,58 +100,93 @@ class CamDaemon(threading.Thread):
             if "ffmpeg" in p.info["name"].lower()
         ]
 
+    def get_ffmpeg_pid(self, others):
+        ffmpeg_pid = None
+        for proc in self.get_ffmpeg_processes():
+            if proc.info["pid"] not in [p.info["pid"] for p in others]:
+                ffmpeg_pid = proc.info["pid"]
+                break
+        return ffmpeg_pid
+
+    def kill_ffmpeg(self, ffmpeg_pid=None):
+        if ffmpeg_pid:
+            os.kill(ffmpeg_pid, signal.SIGKILL)
+        else:
+            other_pid = None
+            for proc in psutil.process_iter(["pid", "name"]):
+                if "ffmpeg" in proc.info["name"].lower():
+                    other_pid = proc.info["pid"]
+                    break
+            if other_pid:
+                os.kill(ffmpeg_pid, signal.SIGKILL)
+
     def capture(self):
         previous_frame = None
+        same_frame_count = 0
+        # same frame limit depends on the delay if no delay is set, limit is 5000 frames
+        # 25 frames per second * 5 seconds = 125 frames
+        if self.delay > 0:
+            same_frame_limit = 25 * self.delay * 5
+        else:
+            same_frame_limit = 5000
+
         while self.camera_control.is_capturing():
             try:
                 # to not kill other ffmpeg processes opened by other applications
                 ffmpeg_processes = self.get_ffmpeg_processes()
 
                 self.reader = imageio.get_reader(f"<video{self.camera}>")
+                self.camera_control.set_stuck(False)
+
                 # wait for new ffmpeg process to start from imageio
                 while len(self.get_ffmpeg_processes()) == len(ffmpeg_processes):
                     sleep(0.1)
 
                 # store the pid of the current ffmpeg process
-                self.ffmpeg_pid = None
-                for proc in self.get_ffmpeg_processes():
-                    if proc.info["pid"] not in [
-                        p.info["pid"] for p in ffmpeg_processes
-                    ]:
-                        self.ffmpeg_pid = proc.info["pid"]
-                        break
+                ffmpeg_pid = self.get_ffmpeg_pid(ffmpeg_processes)
 
                 while self.camera_control.is_capturing():
                     try:
-                        print("Capturing frame ...")
                         frame = self.reader.get_next_data()
-                        if (
-                            previous_frame is not None
-                            and (frame == previous_frame).all()
+                        if previous_frame is not None and np.array_equal(
+                            frame, previous_frame
                         ):
-                            print(
-                                "Frame is the same as previous. Reopening reader after 5 seconds."
-                            )
+                            same_frame_count += 1
+                            if same_frame_count > same_frame_limit:
+                                print(
+                                    f"More than {same_frame_limit} frames are the same as previous. "
+                                    "Assuming the stream is stuck. "
+                                    "Reopening reader after 5 seconds."
+                                )
+                                self.camera_control.set_stuck(True)
+                                self.kill_ffmpeg(ffmpeg_pid)
+                                self.reader.close()
+                                sleep(5)
+                                # start a new reader
+                                ffmpeg_processes = self.get_ffmpeg_processes()
 
-                            if self.ffmpeg_pid:
-                                os.kill(self.ffmpeg_pid, signal.SIGKILL)
-                            else:
-                                for proc in psutil.process_iter(["pid", "name"]):
-                                    if "ffmpeg" in proc.info["name"].lower():
-                                        self.ffmpeg_pid = proc.info["pid"]
-                                        break
-                                if self.ffmpeg_pid:
-                                    os.kill(self.ffmpeg_pid, signal.SIGKILL)
-
-                            sleep(5)
-                            self.reader = imageio.get_reader(f"<video{self.camera}>")
-                            continue
+                                self.reader = imageio.get_reader(
+                                    f"<video{self.camera}>"
+                                )
+                                while len(self.get_ffmpeg_processes()) == len(
+                                    ffmpeg_processes
+                                ):
+                                    sleep(0.1)
+                                ffmpeg_pid = self.get_ffmpeg_pid(ffmpeg_processes)
+                                same_frame_count = 0
+                                self.camera_control.set_stuck(False)
+                                continue
+                        else:
+                            same_frame_count = 0
                         previous_frame = frame
+
                         if self.rotate_image:
                             frame = frame[::-1, ::-1]
                         self.camera_control.update_image(frame)
+
                         if self.delay > 0:
                             sleep(self.delay)
+
                     except Exception as e:
                         print("Error capturing frame: " + str(e))
                         break
@@ -154,7 +199,8 @@ class CamDaemon(threading.Thread):
 def create_stream_frame(camera_control):
     while True:
         img = camera_control.get_image()
-        if img is not None:
+        stuck = camera_control.is_stuck()
+        if img is not None and not stuck:
             try:
                 buffer = BytesIO()
                 imageio.imwrite(buffer, img, format="jpg")
@@ -251,7 +297,7 @@ def handle_args():
         help="delay between captures (seconds)",
         type=float,
         required=False,
-        default=1,
+        default=0,
     )
     params = vars(parser.parse_args())
     return params
