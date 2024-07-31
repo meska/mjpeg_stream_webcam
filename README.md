@@ -26,6 +26,7 @@ optional params:
 
 `--capture_api` see https://docs.opencv.org/3.4/d4/d15/group__videoio__flags__base.html , defaults to automatic
 
+`--delay` delay in seconds between frames, defaults to 1 
 
 on octoprint you can use http://localhost:5001/cam.mjpg for stream url and http://localhost:5001/snap.jpg for snapshot url.
 
