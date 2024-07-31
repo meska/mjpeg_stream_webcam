@@ -17,7 +17,7 @@ from flask import Flask, Response, redirect, send_file, url_for
 
 app = Flask(__name__)
 img_lock = Lock()
-img = None
+
 
 
 class CameraControl:
@@ -62,13 +62,13 @@ signal.signal(signal.SIGINT, signal_handler_sigint)
 
 class CamDaemon(threading.Thread):
     def __init__(
-        self,
-        camera_control,
-        camera,
-        capture_width,
-        capture_height,
-        capture_api,
-        rotate_image=False,
+            self,
+            camera_control,
+            camera,
+            capture_width,
+            capture_height,
+            capture_api,
+            rotate_image=False,
     ):
         threading.Thread.__init__(self)
         self.camera_control = camera_control
@@ -138,16 +138,17 @@ def video():
 
 @app.route("/snap.jpg")
 def snap():
-    try:
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        jpeg = Image.fromarray(img_rgb)
-        buffer_file = BytesIO()
-        jpeg.save(buffer_file, "JPEG")
-        buffer_file.seek(0)
+    # check if camera is capturing and return an empty buffer if not instead of an error
+    if not camera_control.is_capturing() or camera_control.img is None:
+        return send_file(BytesIO(), download_name="snap.jpg", mimetype="image/jpeg")
 
-        return send_file(buffer_file, download_name="snap.jpg", mimetype="image/jpeg")
-    except OSError:
-        pass
+    img_rgb = cv2.cvtColor(camera_control.img, cv2.COLOR_BGR2RGB)
+    jpeg = Image.fromarray(img_rgb)
+    buffer_file = BytesIO()
+    jpeg.save(buffer_file, "JPEG")
+    buffer_file.seek(0)
+
+    return send_file(buffer_file, download_name="snap.jpg", mimetype="image/jpeg")
 
 
 def handle_args():
