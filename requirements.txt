@@ -1,5 +1,6 @@
-opencv-python
 pillow
 flask
 imageio
 imageio-ffmpeg
+numpy
+psutil

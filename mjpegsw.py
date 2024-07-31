@@ -22,6 +22,26 @@ class CameraControl:
         self.img = None
         self.lock = Lock()
         self.stuck = False
+        self.width = None
+        self.height = None
+        self.rotate_image = False
+
+    def set_rotate_image(self, rotate_image):
+        with self.lock:
+            self.rotate_image = rotate_image
+
+    def get_rotate_image(self):
+        with self.lock:
+            return self.rotate_image
+
+    def set_resolution(self, width, height):
+        with self.lock:
+            self.width = width
+            self.height = height
+
+    def get_resolution(self):
+        with self.lock:
+            return self.width, self.height
 
     def stop_capturing(self):
         with self.lock:
@@ -72,7 +92,6 @@ class CamDaemon(threading.Thread):
         camera,
         capture_width,
         capture_height,
-        capture_api,
         rotate_image=False,
         delay=0.2,
     ):
@@ -82,9 +101,10 @@ class CamDaemon(threading.Thread):
         self.capture_width = capture_width
         self.capture_height = capture_height
         self.rotate_image = rotate_image
-        self.capture_api = capture_api
         self.delay = delay
         self.reader = None
+        self.camera_control.set_resolution(capture_width, capture_height)
+        self.camera_control.set_rotate_image(rotate_image)
 
     def run(self):
         while self.camera_control.is_capturing():
@@ -108,7 +128,8 @@ class CamDaemon(threading.Thread):
                 break
         return ffmpeg_pid
 
-    def kill_ffmpeg(self, ffmpeg_pid=None):
+    @staticmethod
+    def kill_ffmpeg(ffmpeg_pid=None):
         if ffmpeg_pid:
             os.kill(ffmpeg_pid, signal.SIGKILL)
         else:
@@ -154,7 +175,8 @@ class CamDaemon(threading.Thread):
                             same_frame_count += 1
                             if same_frame_count > same_frame_limit:
                                 print(
-                                    f"More than {same_frame_limit} frames are the same as previous. "
+                                    f"More than {same_frame_limit} frames"
+                                    f"are the same as previous. "
                                     "Assuming the stream is stuck. "
                                     "Reopening reader after 5 seconds."
                                 )
@@ -196,16 +218,26 @@ class CamDaemon(threading.Thread):
                 sleep(5)
 
 
-def create_stream_frame(camera_control):
+def create_stream_frame(cam_control):
     while True:
-        img = camera_control.get_image()
-        stuck = camera_control.is_stuck()
+        img = cam_control.get_image()
+        stuck = cam_control.is_stuck()
+        width, height = cam_control.get_resolution()
+        rotate = cam_control.get_rotate_image()
         if img is not None and not stuck:
             try:
+                img = Image.fromarray(img)
+
+                if width and height:
+                    img.thumbnail((width, height))
+
+                if rotate:
+                    img.rotate(180)
+
                 buffer = BytesIO()
-                imageio.imwrite(buffer, img, format="jpg")
+                img.save(buffer, format="JPEG")
                 frame = buffer.getvalue()
-                yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
+                yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
             except Exception as e:
                 print("Failed to encode image: " + str(e))
                 continue
@@ -285,13 +317,6 @@ def handle_args():
         action="store_true",
     )
     parser.add_argument(
-        "-a",
-        "--capture_api",
-        help="specific api for capture",
-        type=str,
-        required=False,
-    )
-    parser.add_argument(
         "-d",
         "--delay",
         help="delay between captures (seconds)",
@@ -311,8 +336,6 @@ def main():
         print("Image width set to: " + str(params["width"]))
     if params["rotate"]:
         print("Image will be rotated 180 degrees")
-    if params["capture_api"]:
-        print("Will be used capture api: " + params["capture_api"])
     if params["delay"] > 0:
         print(
             "Will be used delay between captures: " + str(params["delay"]) + " seconds"
@@ -322,7 +345,6 @@ def main():
         params["camera"],
         params["width"],
         params["height"],
-        params["capture_api"],
         params["rotate"],
         params["delay"],
     )
