@@ -19,7 +19,6 @@ app = Flask(__name__)
 img_lock = Lock()
 
 
-
 class CameraControl:
     def __init__(self):
         self.capturing = True
@@ -62,13 +61,14 @@ signal.signal(signal.SIGINT, signal_handler_sigint)
 
 class CamDaemon(threading.Thread):
     def __init__(
-            self,
-            camera_control,
-            camera,
-            capture_width,
-            capture_height,
-            capture_api,
-            rotate_image=False,
+        self,
+        camera_control,
+        camera,
+        capture_width,
+        capture_height,
+        capture_api,
+        rotate_image=False,
+        delay=0.2,
     ):
         threading.Thread.__init__(self)
         self.camera_control = camera_control
@@ -77,6 +77,7 @@ class CamDaemon(threading.Thread):
         self.capture_height = capture_height
         self.rotate_image = rotate_image
         self.capture_api = capture_api
+        self.delay = delay
 
     def run(self):
         while self.camera_control.is_capturing():
@@ -102,6 +103,8 @@ class CamDaemon(threading.Thread):
                     frame = cv2.rotate(frame, cv2.ROTATE_180)
                 if ret:
                     self.camera_control.update_image(frame)
+                if self.delay > 0:
+                    sleep(self.delay)
             except Exception as e:
                 print("Error: " + str(e))
                 self.camera_control.stop_capturing()
@@ -156,10 +159,18 @@ def handle_args():
         description="Mjpeg streaming server: mjpegsw -p 8080 --camera 2"
     )
     parser.add_argument(
-        "-p", "--port", help="http listening port, default 5001", type=int, default=5001
+        "-p",
+        "--port",
+        help="http listening port, default 5001",
+        type=int,
+        default=5001,
     )
     parser.add_argument(
-        "-c", "--camera", help="opencv camera number, ex. -c 1", type=int, default=0
+        "-c",
+        "--camera",
+        help="opencv camera number, ex. -c 1",
+        type=int,
+        default=0,
     )
     parser.add_argument(
         "-i",
@@ -169,16 +180,39 @@ def handle_args():
         default="127.0.0.1",
     )
     parser.add_argument(
-        "-w", "--width", help="capture resolution width", type=int, required=False
+        "-w",
+        "--width",
+        help="capture resolution width",
+        type=int,
+        required=False,
     )
     parser.add_argument(
-        "-x", "--height", help="capture resolution height", type=int, required=False
+        "-x",
+        "--height",
+        help="capture resolution height",
+        type=int,
+        required=False,
     )
     parser.add_argument(
-        "-r", "--rotate", help="rotate image 180 degrees", action="store_true"
+        "-r",
+        "--rotate",
+        help="rotate image 180 degrees",
+        action="store_true",
     )
     parser.add_argument(
-        "-a", "--capture_api", help="specific api for capture", type=str, required=False
+        "-a",
+        "--capture_api",
+        help="specific api for capture",
+        type=str,
+        required=False,
+    )
+    parser.add_argument(
+        "-d",
+        "--delay",
+        help="delay between captures (seconds)",
+        type=float,
+        required=False,
+        default=1,
     )
     params = vars(parser.parse_args())
     return params
@@ -194,6 +228,10 @@ def main():
         print("Image will be rotated 180 degrees")
     if params["capture_api"]:
         print("Will be used capture api: " + params["capture_api"])
+    if params["delay"] > 0:
+        print(
+            "Will be used delay between captures: " + str(params["delay"]) + " seconds"
+        )
     # starts camera daemon thread
     camera = CamDaemon(
         camera_control,
@@ -202,6 +240,7 @@ def main():
         params["height"],
         params["capture_api"],
         params["rotate"],
+        params["delay"],
     )
     camera.daemon = True
     camera.start()
