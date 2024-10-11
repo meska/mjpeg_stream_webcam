@@ -143,7 +143,7 @@ def video():
 def snap():
     # check if camera is capturing and return an empty buffer if not instead of an error
     if not camera_control.is_capturing() or camera_control.img is None:
-        return send_file(BytesIO(), download_name="snap.jpg", mimetype="image/jpeg")
+        return send_file(BytesIO(), attachment_filename="snap.jpg", mimetype="image/jpeg")
 
     img_rgb = cv2.cvtColor(camera_control.img, cv2.COLOR_BGR2RGB)
     jpeg = Image.fromarray(img_rgb)
@@ -151,7 +151,7 @@ def snap():
     jpeg.save(buffer_file, "JPEG")
     buffer_file.seek(0)
 
-    return send_file(buffer_file, download_name="snap.jpg", mimetype="image/jpeg")
+    return send_file(buffer_file, attachment_filename="snap.jpg", mimetype="image/jpeg")
 
 
 def handle_args():
